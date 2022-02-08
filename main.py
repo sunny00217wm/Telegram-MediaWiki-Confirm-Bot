@@ -110,30 +110,26 @@ def confirm(msg: catbot.Message):
         bot.send_message(msg.chat.id, text=config['messages']['confirm_prompt'], parse_mode='HTML')
         return
 
-    wikimedia_username = '_'.join(user_input_token[1:])
-    wikimedia_username = wikimedia_username[0].upper() + wikimedia_username[1:]
+    translatewiki_username = '_'.join(user_input_token[1:])
+    translatewiki_username = translatewiki_username[0].upper() + translatewiki_username[1:]
     bot.send_message(msg.chat.id, text=config['messages']['confirm_checking'])
-    global_user_info_query = site.api(**{
-        "action": "query",
-        "format": "json",
-        "meta": "globaluserinfo",
-        "utf8": 1,
-        "formatversion": "2",
-        "guiuser": wikimedia_username,
-        "guiprop": "merged"
+    user_info_query = site.api(**{
+         "action": "query",
+         "format": "json",
+        "list": "users",
+        "usprop": "groups",
+        "usattachedwiki": "",
+        "ususers": translatewiki_username
     })
 
-    if 'missing' in global_user_info_query['query']['globaluserinfo'].keys():
+    user_info = user_info_query['query']['users'][0]
+
+    if not user_info or 'missing' in user_info.keys():
         bot.send_message(msg.chat.id, text=config['messages']['confirm_user_not_found'].format(
-            name=wikimedia_username))
+            name=translatewiki_username))
         return
 
-    global_user_info = global_user_info_query['query']['globaluserinfo']['merged']
-    for local_user in global_user_info:
-        if local_user['editcount'] >= 50 and \
-                time.time() - timegm(time.strptime(local_user['registration'], '%Y-%m-%dT%H:%M:%SZ')) > 7 * 86400:
-            break
-    else:
+    if not ( 'translator' in user_info['groups'] or 'sysop' in user_info['groups'] ):
         bot.send_message(msg.chat.id, text=config['messages']['confirm_ineligible'])
         return
 
@@ -147,7 +143,7 @@ def confirm(msg: catbot.Message):
                 if entry.confirmed:
                     bot.send_message(msg.chat.id,
                                      text=config['messages']['confirm_already'].format(
-                                         wp_name=entry.wikimedia_username))
+                                         wiki_name=entry.translatewiki_username))
                     return
                 elif entry.confirming:
                     bot.send_message(msg.chat.id, text=config['messages']['confirm_confirming'])
@@ -158,7 +154,7 @@ def confirm(msg: catbot.Message):
                 else:
                     entry_index = i
 
-            elif entry.wikimedia_username == wikimedia_username and (entry.confirmed or entry.confirming):
+            elif entry.translatewiki_username == translatewiki_username and (entry.confirmed or entry.confirming):
                 bot.send_message(msg.chat.id, text=config['messages']['confirm_conflict'])
                 return
         else:
@@ -167,7 +163,7 @@ def confirm(msg: catbot.Message):
                 ac_list.append(entry.to_dict())
             entry = Ac.from_dict(ac_list[entry_index])
             entry.confirming = True
-            entry.wikimedia_username = wikimedia_username
+            entry.translatewiki_username = translatewiki_username
             ac_list[entry_index] = entry.to_dict()
 
         rec['ac'] = ac_list
@@ -199,7 +195,7 @@ def confirm_button(query: catbot.CallbackQuery):
                 continue
             if entry.confirmed:
                 bot.send_message(query.msg.chat.id, text=config['messages']['confirm_already'].format(
-                    wp_name=entry.wikimedia_username))
+                    wiki_name=entry.translatewiki_username))
                 return
             if entry.confirming:
                 entry_index = i
@@ -213,7 +209,7 @@ def confirm_button(query: catbot.CallbackQuery):
             while True:
                 rev = next(revs)
                 if 0 <= timegm(rev['timestamp']) - query.msg.date <= 180:
-                    if rev['user'].replace(' ', '_') != entry.wikimedia_username:
+                    if rev['user'].replace(' ', '_') != entry.translatewiki_username:
                         continue
                     if confirm_token not in rev['comment']:
                         continue
@@ -236,7 +232,7 @@ def confirm_button(query: catbot.CallbackQuery):
     if entry.confirmed:
         bot.send_message(query.msg.chat.id, text=config['messages']['confirm_complete'])
         lift_restriction_trial(entry)
-        log(config['messages']['confirm_log'].format(tg_id=entry.telegram_id, wp_id=entry.wikimedia_username,
+        log(config['messages']['confirm_log'].format(tg_id=entry.telegram_id, wiki_id=entry.translatewiki_username,
                                                      site=config['main_site']))
     else:
         bot.send_message(query.msg.chat.id, text=config['messages']['confirm_failed'])
@@ -291,7 +287,7 @@ def deconfirm_button(query: catbot.CallbackQuery):
         rec['ac'] = ac_list
         json.dump(rec, open(config['record'], 'w', encoding='utf-8'), indent=2, ensure_ascii=False)
 
-    log(config['messages']['deconfirm_log'].format(tg_id=entry.telegram_id, wp_id=entry.wikimedia_username,
+    log(config['messages']['deconfirm_log'].format(tg_id=entry.telegram_id, wiki_id=entry.translatewiki_username,
                                                    site=config['main_site']))
     bot.send_message(query.msg.chat.id, text=config['messages']['deconfirm_succ'])
 
@@ -518,7 +514,7 @@ def whois(msg: catbot.Message):
         for i in range(len(ac_list)):
             entry = Ac.from_dict(ac_list[i])
             if (entry.confirmed or entry.whitelist_reason) and (entry.telegram_id == whois_id or (
-                    entry.wikimedia_username == whois_wm_name and whois_wm_name != '')):
+                    entry.translatewiki_username == whois_wm_name and whois_wm_name != '')):
                 break
         else:
             bot.send_message(config['group'], text=config['messages']['whois_not_found'], reply_to_message_id=msg.id)
@@ -532,11 +528,11 @@ def whois(msg: catbot.Message):
     resp_text = f'{name} ({entry.telegram_id})\n'
 
     if entry.confirmed:
-        resp_text += config['messages']['whois_has_wikimedia'].format(
-            wp_id=entry.wikimedia_username, ctime=time.strftime('%Y-%m-%d %H:%M', time.gmtime(entry.confirmed_time))
+        resp_text += config['messages']['whois_has_translator'].format(
+            wiki_id=entry.translatewiki_username, ctime=time.strftime('%Y-%m-%d %H:%M', time.gmtime(entry.confirmed_time))
         )
     else:
-        resp_text += config['messages']['whois_no_wikimedia']
+        resp_text += config['messages']['whois_no_translator']
     if entry.whitelist_reason:
         resp_text += config['messages']['whois_whitelisted'].format(reason=entry.whitelist_reason)
 
